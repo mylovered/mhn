@@ -36,7 +36,8 @@ cd kippo
 
 # Configure Kippo
 mv kippo.cfg.dist kippo.cfg
-sed -i 's/ssh_port = 2222/ssh_port = 22/g' kippo.cfg
+sed -i 's/#ssh_addr = 0.0.0.0/ssh_addr = 127.0.0.1/g' kippo.cfg
+sed -i 's/ssh_port = 2222/ssh_port = 64222/g' kippo.cfg
 sed -i 's/hostname = svr03/hostname = db01/g' kippo.cfg
 sed -i 's/ssh_version_string = SSH-2.0-OpenSSH_5.1p1 Debian-5/ssh_version_string = SSH-2.0-OpenSSH_5.5p1 Debian-4ubuntu5/g' kippo.cfg
 
@@ -58,8 +59,21 @@ debug = false
 
 EOF
 
-# Setup kippo to start at boot
-sed -i 's/twistd -y kippo.tac -l log\/kippo.log --pidfile kippo.pid/su kippo -c "authbind --deep twistd -n -y kippo.tac -l log\/kippo.log --pidfile kippo.pid"/g'  /opt/kippo/start.sh
+# Setup kippo to start at boot and add iptables rule to forward port 22 to 64222
+mv start.sh start.sh.backup
+cat > start.sh <<EOF
+#!/bin/sh
+
+echo "Adding iptables port forwarding rule...\n"
+sysctl -w net.ipv4.conf.eth0.route_localnet=1
+iptables -F -t nat
+iptables -t nat -A PREROUTING -i eth0 -p tcp -m tcp --dport 22 -j DNAT --to-destination 127.0.0.1:64222
+
+echo "Starting kippo in the background...\n"
+cd $(dirname $0)
+exec /usr/bin/twistd -n -y kippo.tac -l log/kippo.log --pidfile kippo.pid
+EOF
+chmod +x start.sh
 
 # Config for supervisor.
 cat > /etc/supervisor/conf.d/kippo.conf <<EOF
@@ -71,7 +85,9 @@ stderr_logfile=/opt/kippo/log/kippo.err
 autostart=true
 autorestart=true
 redirect_stderr=true
-stopsignal=QUIT
+stopsignal=KILL
+user=kippo
+stopasgroup=true
 EOF
 
 supervisorctl update
